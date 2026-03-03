@@ -72,6 +72,43 @@ button {
 button:hover { background: rgba(255,255,255,0.12); }
 button:disabled { opacity: 0.55; cursor: not-allowed; }
 
+.rec-btn.recording {
+  background: rgba(220, 38, 38, 0.25);
+  border-color: rgba(220, 38, 38, 0.5);
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  50%      { box-shadow: 0 0 12px 2px rgba(220, 38, 38, 0.6); }
+}
+
+.export-progress {
+  width: 100%;
+  max-width: 1280px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px;
+}
+.export-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+.export-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #3388ff, #22cc66);
+  transition: width 0.15s ease;
+}
+.export-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .slider {
   display: grid;
   gap: 6px;
@@ -132,6 +169,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   height: 100%;
   display: block;
 }
+
+
 
 .legend {
   display: flex;

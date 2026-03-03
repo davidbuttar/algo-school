@@ -52,7 +52,7 @@ export function createThreeLaneViz(
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#05060c");
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
@@ -200,6 +200,78 @@ export function createThreeLaneViz(
 
   lanes.forEach(buildLaneBars);
 
+  // ── F1 Countdown Lights (in Three.js scene) ───────────
+  const f1Group = new THREE.Group();
+  f1Group.position.set(0, camCenterY, 5); // in front of bars, centered
+  f1Group.visible = false;
+  scene.add(f1Group);
+
+  // Dark backing panel
+  const panelW = 22;
+  const panelH = 5;
+  const panelMat = new THREE.MeshBasicMaterial({ color: new THREE.Color("#111111") });
+  const panelMesh = new THREE.Mesh(new THREE.PlaneGeometry(panelW, panelH), panelMat);
+  panelMesh.position.z = -0.1;
+  f1Group.add(panelMesh);
+
+  // Border
+  const borderMat = new THREE.MeshBasicMaterial({ color: new THREE.Color("#333333") });
+  const borderMesh = new THREE.Mesh(new THREE.PlaneGeometry(panelW + 0.4, panelH + 0.4), borderMat);
+  borderMesh.position.z = -0.2;
+  f1Group.add(borderMesh);
+
+  // 5 bulbs
+  const bulbRadius = 1.2;
+  const bulbSpacing = 3.8;
+  const bulbOffColor = new THREE.Color("#1a0808");
+  const bulbOnColor = new THREE.Color(2.0, 0.15, 0.05); // HDR red — glows through bloom
+  const circleGeom = new THREE.CircleGeometry(bulbRadius, 32);
+
+  const f1Bulbs: THREE.Mesh[] = [];
+  for (let i = 0; i < 5; i++) {
+    const mat = new THREE.MeshBasicMaterial({ color: bulbOffColor.clone() });
+    const mesh = new THREE.Mesh(circleGeom, mat);
+    mesh.position.x = (i - 2) * bulbSpacing;
+    f1Group.add(mesh);
+    f1Bulbs.push(mesh);
+  }
+
+  function setBulb(index: number, on: boolean) {
+    const mat = f1Bulbs[index].material as THREE.MeshBasicMaterial;
+    mat.color.copy(on ? bulbOnColor : bulbOffColor);
+    mat.needsUpdate = true;
+  }
+
+  /** Run the F1 countdown sequence inside the Three.js scene.
+   *  Returns a promise that resolves when the race should start.
+   *  `beepFn` is called for sound effects (ignored during offline export). */
+  async function runF1Countdown(beepFn?: (freq: number, dur: number) => void) {
+    // Reset bulbs
+    for (let i = 0; i < 5; i++) setBulb(i, false);
+    f1Group.visible = true;
+
+    const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+    // Lights on one by one (1 second apart)
+    for (let i = 0; i < 5; i++) {
+      await wait(1000);
+      setBulb(i, true);
+      beepFn?.(440, 0.15);
+    }
+
+    // Pause with all 5 lit
+    await wait(1000);
+
+    // All lights out — GO!
+    for (let i = 0; i < 5; i++) setBulb(i, false);
+    beepFn?.(880, 0.3);
+
+    // 300ms dramatic pause
+    await wait(300);
+
+    f1Group.visible = false;
+  }
+
   // ── Resize — keep ortho frustum matching aspect ────────
   function resize() {
     const w = container.clientWidth;
@@ -260,7 +332,7 @@ export function createThreeLaneViz(
   }
 
   // ── Apply a single op to a lane ────────────────────────
-  function applyOp(lane: Lane, op: Op) {
+  function applyOpCore(lane: Lane, op: Op, silent: boolean) {
     if (op.type !== "done" && op.type !== "markPivot") {
       lane.opCount++;
       updateCounter(lane);
@@ -268,7 +340,7 @@ export function createThreeLaneViz(
     switch (op.type) {
       case "compare":
         highlight(lane, [op.i, op.j], COLORS.compare);
-        soundCompare(lane.values[op.i], lane.values[op.j], size);
+        if (!silent) soundCompare(lane.values[op.i], lane.values[op.j], size);
         break;
       case "swap": {
         const { i, j } = op;
@@ -281,7 +353,7 @@ export function createThreeLaneViz(
           bar.position.y = h / 2;
         }
         highlight(lane, [i, j], COLORS.swap);
-        soundSwap(lane.values[i], lane.values[j], size);
+        if (!silent) soundSwap(lane.values[i], lane.values[j], size);
         break;
       }
       case "overwrite": {
@@ -292,7 +364,7 @@ export function createThreeLaneViz(
         bar.scale.y = h;
         bar.position.y = h / 2;
         highlight(lane, [op.i], COLORS.overwrite);
-        soundOverwrite(op.value, size);
+        if (!silent) soundOverwrite(op.value, size);
         break;
       }
       case "markPivot":
@@ -302,7 +374,7 @@ export function createThreeLaneViz(
         }
         lane.activePivot = op.i;
         if (lane.bars[op.i]) setBarColor(lane.bars[op.i], COLORS.pivot);
-        soundPivot(lane.values[op.i], size);
+        if (!silent) soundPivot(lane.values[op.i], size);
         break;
       case "unmarkPivot":
         if (lane.bars[op.i]) setBarColor(lane.bars[op.i], COLORS.normal);
@@ -311,9 +383,13 @@ export function createThreeLaneViz(
       case "done":
         activeHighlights.delete(lane);
         lane.bars.forEach((b) => setBarColor(b, COLORS.done));
-        soundDone();
+        if (!silent) soundDone();
         break;
     }
+  }
+
+  function applyOp(lane: Lane, op: Op) {
+    applyOpCore(lane, op, false);
   }
 
   function sleep(ms: number) {
@@ -386,6 +462,8 @@ export function createThreeLaneViz(
     lanes,
     reset,
     destroy,
+    getCanvas: () => renderer.domElement,
+    runCountdown: runF1Countdown,
     pause: () => { paused = true; },
     resume: () => { paused = false; },
     isPaused: () => paused,
@@ -405,5 +483,49 @@ export function createThreeLaneViz(
       ]);
     },
     isRunning: () => lanes.some((l) => l.running),
+
+    /**
+     * Offline frame-by-frame export.
+     * Stops the render loop, steps through all ops deterministically,
+     * renders each frame via the bloom composer, and yields control
+     * to the caller so it can capture the canvas.
+     *
+     * Sound is NOT played — the caller generates audio offline.
+     */
+    exportFrames: async function* (
+      allOps: [import("./algorithms").Op[], import("./algorithms").Op[], import("./algorithms").Op[]],
+      framesPerOp: number
+    ): AsyncGenerator<{ tick: number; frame: number }> {
+      // Pause real-time render loop
+      cancelAnimationFrame(raf);
+
+      // Reset op counters / highlights
+      lanes.forEach((lane) => {
+        lane.opCount = 0;
+        updateCounter(lane);
+        clearHighlights(lane);
+      });
+
+      const maxLen = Math.max(...allOps.map((o) => o.length));
+      let globalFrame = 0;
+
+      for (let tick = 0; tick < maxLen; tick++) {
+        // Apply one op per lane (silent — no Web Audio)
+        for (let li = 0; li < 3; li++) {
+          if (tick < allOps[li].length) {
+            applyOpCore(lanes[li], allOps[li][tick], true);
+          }
+        }
+
+        // Render `framesPerOp` identical frames for this tick
+        for (let f = 0; f < framesPerOp; f++) {
+          composer.render();
+          yield { tick, frame: globalFrame++ };
+        }
+      }
+
+      // Resume render loop
+      renderLoop();
+    },
   };
 }

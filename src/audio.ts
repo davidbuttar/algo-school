@@ -116,6 +116,16 @@ export function soundDone() {
   });
 }
 
+/** Return the live AudioContext (or null before init). */
+export function getAudioContext() {
+  return ctx;
+}
+
+/** Return the master gain node (or null before init). */
+export function getMasterGain() {
+  return masterGain;
+}
+
 export function destroyAudio() {
   if (ctx) {
     ctx.close();

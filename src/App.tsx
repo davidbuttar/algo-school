@@ -3,6 +3,7 @@ import "./app.css";
 import { bubbleSortOps, mergeSortOps, quickSortOps } from "./algorithms";
 import { createThreeLaneViz } from "./threeLaneViz";
 import { initAudio, setMuted, destroyAudio } from "./audio";
+import { exportVideo, isExporting, cancelExport, type ExportViz } from "./recorder";
 
 function makeRandomArray(n: number) {
   // values 1..n shuffled
@@ -24,6 +25,12 @@ export default function App() {
   const [muted, setMutedState] = useState(false);
 
   const [status, setStatus] = useState<"idle" | "running" | "paused">("idle");
+  const [countingDown, setCountingDown] = useState(false);
+  const [exportState, setExportState] = useState<{
+    active: boolean;
+    progress: number;
+    phase: string;
+  }>({ active: false, progress: 0, phase: "" });
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -41,7 +48,25 @@ export default function App() {
     vizRef.current?.reset(seed);
   }, [seed]);
 
-  const controlsDisabled = status === "running" || status === "paused";
+  const controlsDisabled = status === "running" || status === "paused" || countingDown;
+
+  /** Play a short beep at the given frequency. */
+  function beep(freq: number, duration: number) {
+    if (muted) return;
+    try {
+      const ac = new AudioContext();
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.35, ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + duration);
+      osc.connect(gain).connect(ac.destination);
+      osc.start();
+      osc.stop(ac.currentTime + duration);
+      setTimeout(() => ac.close(), (duration + 0.1) * 1000);
+    } catch { /* audio not available */ }
+  }
 
   async function start() {
     if (!vizRef.current) return;
@@ -52,6 +77,11 @@ export default function App() {
 
     // Reset lane visuals back to the seed before starting
     vizRef.current.reset(seed);
+
+    // F1 countdown (rendered in Three.js canvas)
+    setCountingDown(true);
+    await vizRef.current.runCountdown(beep);
+    setCountingDown(false);
 
     setStatus("running");
 
@@ -84,6 +114,33 @@ export default function App() {
     setMuted(next);
   }
 
+  async function handleExport() {
+    if (!vizRef.current) return;
+    if (isExporting()) {
+      cancelExport();
+      return;
+    }
+
+    setExportState({ active: true, progress: 0, phase: "Starting…" });
+
+    try {
+      await exportVideo(
+        vizRef.current as ExportViz,
+        seed,
+        speed,
+        size,
+        (fraction, phase) =>
+          setExportState({ active: true, progress: fraction, phase })
+      );
+    } catch (err) {
+      console.error("Export failed:", err);
+    } finally {
+      // Reset viz back to seed after export
+      vizRef.current?.reset(seed);
+      setExportState({ active: false, progress: 0, phase: "" });
+    }
+  }
+
   function reset() {
     setSeed(makeRandomArray(size));
     setStatus("idle");
@@ -112,6 +169,13 @@ export default function App() {
           <button onClick={toggleMute}>
             {muted ? "Unmute" : "Mute"}
           </button>
+          <button
+            className={exportState.active ? "rec-btn recording" : "rec-btn"}
+            onClick={handleExport}
+            disabled={controlsDisabled}
+          >
+            {exportState.active ? "❌ Cancel Export" : "🎥 Export MP4"}
+          </button>
 
           <div className="slider">
             <label>
@@ -136,6 +200,19 @@ export default function App() {
 
       <main className="main">
         <div ref={containerRef} className="canvasWrap" />
+        {exportState.active && (
+          <div className="export-progress">
+            <div className="export-bar">
+              <div
+                className="export-fill"
+                style={{ width: `${Math.round(exportState.progress * 100)}%` }}
+              />
+            </div>
+            <span className="export-label">
+              {exportState.phase} ({Math.round(exportState.progress * 100)}%)
+            </span>
+          </div>
+        )}
       </main>
     </div>
   );
