@@ -69,10 +69,14 @@ export async function renderOfflineAudio(
   initialValues: number[],
   size: number,
   framesPerOp: number,
-  fps: number
+  fps: number,
+  /** Number of frames the countdown occupies (0 to skip countdown audio). */
+  countdownFrames = 0
 ): Promise<Blob> {
   const maxOps = Math.max(...allOps.map((o) => o.length));
-  const duration = (maxOps * framesPerOp) / fps + 2; // +2s safety buffer
+  const countdownDuration = countdownFrames / fps;
+  const sortingDuration = (maxOps * framesPerOp) / fps;
+  const duration = countdownDuration + sortingDuration + 2; // +2s safety buffer
   const sampleRate = 44100;
 
   const ctx = new OfflineAudioContext(
@@ -85,12 +89,25 @@ export async function renderOfflineAudio(
   master.gain.value = 0.18;
   master.connect(ctx.destination);
 
-  // For each lane, walk ops while tracking mutable values
+  // ── Countdown beeps ────────────────────────────────────
+  // 5 lights: each turns on at 1s intervals starting at t=1s
+  // Then all-off beep at t=6s (880 Hz)
+  if (countdownFrames > 0) {
+    const BULB_COUNT = 5;
+    for (let i = 0; i < BULB_COUNT; i++) {
+      const t = (i + 1) * 1.0; // 1s, 2s, 3s, 4s, 5s
+      scheduleTone(ctx, master, 440, t, 0.15, "sine", 1.5);
+    }
+    // "Go" beep at 6s
+    scheduleTone(ctx, master, 880, (BULB_COUNT + 1) * 1.0, 0.3, "sine", 1.8);
+  }
+
+  // ── Sorting sounds (offset by countdown duration) ──────
   for (const ops of allOps) {
     const values = initialValues.slice();
 
     for (let i = 0; i < ops.length; i++) {
-      const time = (i * framesPerOp) / fps;
+      const time = countdownDuration + (i * framesPerOp) / fps;
       const op = ops[i];
 
       switch (op.type) {

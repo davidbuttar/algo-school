@@ -75,10 +75,12 @@ async function packFrames(blobs: Blob[]): Promise<ArrayBuffer> {
 export type ExportViz = {
   reset: (values: number[]) => void;
   getCanvas: () => HTMLCanvasElement;
+  getCountdownScript: (fps: number) => { events: unknown[]; totalFrames: number };
   exportFrames: (
     allOps: [Op[], Op[], Op[]],
-    framesPerOp: number
-  ) => AsyncGenerator<{ tick: number; frame: number }>;
+    framesPerOp: number,
+    fps: number
+  ) => AsyncGenerator<{ phase: string; frame: number }>;
 };
 
 export async function exportVideo(
@@ -105,13 +107,19 @@ export async function exportVideo(
     const delay = Math.max(1, 10 * speedMultiplier);
     const framesPerOp = Math.max(1, Math.round((delay * FPS) / 1000));
     const maxOps = Math.max(bubbleOps.length, mergeOps.length, quickOps.length);
-    const totalFrames = maxOps * framesPerOp;
+
+    // Calculate countdown frames so total includes them
+    const { totalFrames: countdownFrames } = viz.getCountdownScript(FPS);
+    const sortingFrames = maxOps * framesPerOp;
+    const totalFrames = countdownFrames + sortingFrames;
 
     if (cancelled) return;
 
-    // ── 2. Render audio offline ───────────────────────────
+    // ── 2. Render audio offline (with countdown beeps) ────
     onProgress(0, "Rendering audio…");
-    const audioBlob = await renderOfflineAudio(allOps, seed, size, framesPerOp, FPS);
+    const audioBlob = await renderOfflineAudio(
+      allOps, seed, size, framesPerOp, FPS, countdownFrames
+    );
 
     if (cancelled) return;
 
@@ -140,13 +148,13 @@ export async function exportVideo(
 
     if (cancelled) return;
 
-    // ── 5. Reset viz and render frames ────────────────────
+    // ── 5. Reset viz and render all frames (countdown + sorting)
     viz.reset(seed);
 
     let framesSent = 0;
     let batch: Blob[] = [];
 
-    for await (const _info of viz.exportFrames(allOps, framesPerOp)) {
+    for await (const _info of viz.exportFrames(allOps, framesPerOp, FPS)) {
       if (cancelled) break;
 
       const blob = await canvasToJpeg(canvas);

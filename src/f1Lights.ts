@@ -52,6 +52,15 @@ interface Bulb {
   glowMesh: THREE.Mesh;
 }
 
+/** Descriptor for a single countdown event used by offline export. */
+export interface CountdownEvent {
+  /** Frame number at which to apply this action. */
+  atFrame: number;
+  action: "show" | "bulbOn" | "allOff" | "hide";
+  /** Bulb index (only for "bulbOn"). */
+  index?: number;
+}
+
 export interface F1Lights {
   /** The Three.js group — add it to your scene yourself if you prefer. */
   group: THREE.Group;
@@ -59,6 +68,12 @@ export interface F1Lights {
   setBulb: (index: number, on: boolean) => void;
   /** Run the full F1 countdown sequence (5 lights on, then all off). */
   runCountdown: (beepFn?: (freq: number, dur: number) => void) => Promise<void>;
+  /** Get a deterministic frame-level script for offline rendering.
+   *  The total duration in frames is also returned so the caller knows
+   *  how many frames to render for the countdown phase. */
+  getCountdownScript: (fps: number) => { events: CountdownEvent[]; totalFrames: number };
+  /** Apply a single countdown event (used by the offline exporter). */
+  applyEvent: (event: CountdownEvent) => void;
   /** Clean up geometries and materials. */
   dispose: () => void;
 }
@@ -221,6 +236,48 @@ export function createF1Lights(
     group.visible = false;
   }
 
+  // ── getCountdownScript (deterministic, for offline export) ──
+
+  function getCountdownScript(fps: number): { events: CountdownEvent[]; totalFrames: number } {
+    const events: CountdownEvent[] = [];
+    // Timeline: show → (1s gap) bulb0 on → (1s) bulb1 on → ... → bulb4 on → (1s) all off → (0.3s) hide
+    let frame = 0;
+    events.push({ atFrame: frame, action: "show" });
+
+    for (let i = 0; i < cfg.count; i++) {
+      frame += Math.round(fps * 1.0); // 1 second
+      events.push({ atFrame: frame, action: "bulbOn", index: i });
+    }
+
+    frame += Math.round(fps * 1.0); // 1 second
+    events.push({ atFrame: frame, action: "allOff" });
+
+    frame += Math.round(fps * 0.3); // 300ms
+    events.push({ atFrame: frame, action: "hide" });
+
+    return { events, totalFrames: frame };
+  }
+
+  // ── applyEvent (used by offline exporter) ──────────────
+
+  function applyEvent(event: CountdownEvent): void {
+    switch (event.action) {
+      case "show":
+        for (let i = 0; i < cfg.count; i++) setBulb(i, false);
+        group.visible = true;
+        break;
+      case "bulbOn":
+        if (event.index != null) setBulb(event.index, true);
+        break;
+      case "allOff":
+        for (let i = 0; i < cfg.count; i++) setBulb(i, false);
+        break;
+      case "hide":
+        group.visible = false;
+        break;
+    }
+  }
+
   // ── dispose ────────────────────────────────────────────
 
   function dispose() {
@@ -242,5 +299,5 @@ export function createF1Lights(
     });
   }
 
-  return { group, setBulb, runCountdown, dispose };
+  return { group, setBulb, runCountdown, getCountdownScript, applyEvent, dispose };
 }

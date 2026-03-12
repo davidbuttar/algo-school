@@ -208,6 +208,7 @@ export function createThreeLaneViz(
     getCanvas: () => renderer.domElement,
     runCountdown: (beepFn?: (freq: number, dur: number) => void) =>
       f1.runCountdown(beepFn),
+    getCountdownScript: (fps: number) => f1.getCountdownScript(fps),
     pause: () => { paused = true; },
     resume: () => { paused = false; },
     isPaused: () => paused,
@@ -232,14 +233,15 @@ export function createThreeLaneViz(
 
     /**
      * Offline frame-by-frame export.
-     * Stops the render loop, steps through all ops deterministically,
-     * renders each frame via the bloom composer, and yields control
-     * to the caller so it can capture the canvas.
+     * Renders the F1 countdown first, then steps through all sorting ops
+     * deterministically.  Each frame is rendered via the bloom composer
+     * and yielded so the caller can capture the canvas.
      */
     exportFrames: async function* (
       allOps: [import("./algorithms").Op[], import("./algorithms").Op[], import("./algorithms").Op[]],
-      framesPerOp: number
-    ): AsyncGenerator<{ tick: number; frame: number }> {
+      framesPerOp: number,
+      fps: number
+    ): AsyncGenerator<{ phase: "countdown" | "sorting"; frame: number }> {
       cancelAnimationFrame(raf);
 
       lanes.forEach((lane) => {
@@ -248,8 +250,24 @@ export function createThreeLaneViz(
         clearHighlights(lane);
       });
 
-      const maxLen = Math.max(...allOps.map((o) => o.length));
       let globalFrame = 0;
+
+      // ── Phase 1: F1 countdown ──────────────────────────
+      const { events, totalFrames: countdownFrames } = f1.getCountdownScript(fps);
+
+      for (let f = 0; f < countdownFrames; f++) {
+        // Apply any events that fire on this frame
+        for (const ev of events) {
+          if (ev.atFrame === f) f1.applyEvent(ev);
+        }
+        composer.render();
+        yield { phase: "countdown", frame: globalFrame++ };
+      }
+      // Ensure lights are hidden after countdown
+      f1.applyEvent({ atFrame: 0, action: "hide" });
+
+      // ── Phase 2: sorting ops ───────────────────────────
+      const maxLen = Math.max(...allOps.map((o) => o.length));
 
       for (let tick = 0; tick < maxLen; tick++) {
         for (let li = 0; li < 3; li++) {
@@ -260,7 +278,7 @@ export function createThreeLaneViz(
 
         for (let f = 0; f < framesPerOp; f++) {
           composer.render();
-          yield { tick, frame: globalFrame++ };
+          yield { phase: "sorting", frame: globalFrame++ };
         }
       }
 

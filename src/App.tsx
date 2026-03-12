@@ -48,7 +48,7 @@ export default function App() {
     vizRef.current?.reset(seed);
   }, [seed]);
 
-  const controlsDisabled = status === "running" || status === "paused" || countingDown;
+  const controlsDisabled = status === "running" || status === "paused" || countingDown || exportState.active;
 
   /** Play a short beep at the given frequency. */
   function beep(freq: number, duration: number) {
@@ -163,18 +163,18 @@ export default function App() {
           <button onClick={togglePause} disabled={status === "idle"}>
             {status === "paused" ? "Resume" : "Pause"}
           </button>
-          <button onClick={reset}>
+          <button onClick={reset} disabled={controlsDisabled}>
             Reset
           </button>
-          <button onClick={toggleMute}>
+          <button onClick={toggleMute} disabled={exportState.active}>
             {muted ? "Unmute" : "Mute"}
           </button>
           <button
             className={exportState.active ? "rec-btn recording" : "rec-btn"}
             onClick={handleExport}
-            disabled={controlsDisabled}
+            disabled={controlsDisabled && !exportState.active}
           >
-            {exportState.active ? "❌ Cancel Export" : "🎥 Export MP4"}
+            {exportState.active ? "❌ Cancel" : "🎬 Render Video"}
           </button>
 
           <div className="slider">
